@@ -1,4 +1,4 @@
 daedalus
 ========
 
-Private Research Repository
+Sherjil Ozair's private research repository
