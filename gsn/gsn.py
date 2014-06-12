@@ -9,10 +9,9 @@ rng_numpy = numpy.random
 from theano.tensor.shared_randomstreams import RandomStreams
 rng_theano = RandomStreams()
 
-dumpfile = 'models/model7.pkl'
+dumpfile = 'model.pkl'
 
 def corrupt_SnP(x, corruption_level):
-    #return x
     if corruption_level == 0.0:
         return x
     a = rng_theano.binomial(size=x.shape, n=1, p=1-corruption_level)
@@ -20,12 +19,9 @@ def corrupt_SnP(x, corruption_level):
     return x * a + T.eq(a, 0) * b
 
 def corrupt_gaussian(x, corruption_level):
-    #return x
     if corruption_level == 0.0:
         return x
     return x + rng_theano.normal(size=x.shape, avg = 0.0, std = corruption_level)
-
-
 
 class HiddenLayer():
     def __init__(self, n_in, n_out, noise, inputs, act):
