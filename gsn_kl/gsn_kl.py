@@ -3,6 +3,7 @@ import numpy
 import time
 import cPickle
 import os
+import gzip
 from PIL import Image
 from theano import tensor as T
 rng_numpy = numpy.random
@@ -10,6 +11,10 @@ from theano.tensor.shared_randomstreams import RandomStreams
 rng_theano = RandomStreams()
 
 dumpfile = 'model.pkl'
+
+with gzip.open(os.environ['MNIST']) as f:
+    dataset = cPickle.load(f)[0][0]
+    dataset = (dataset > 0.5).astype('float32')
 
 def corrupt_SnP(x, corruption_level):
     if corruption_level == 0.0:
@@ -58,13 +63,14 @@ class HiddenLayers():
 
 class GSN():
     def __init__(self, num_units, input_noise, hidden_noises, acts):
-        self.inputs = T.matrix()
-        self.corrupted_input = corrupt_SnP(self.inputs, input_noise)
+        self.inputs1 = T.matrix()
+        self.inputs2 = T.matrix()
+        self.corrupted_input = corrupt_SnP(self.inputs1, input_noise)
         self.network = HiddenLayers(num_units, hidden_noises, self.corrupted_input, acts)
         self.outputs = self.network.outputs
         self.params = self.network.params
-        ce = -self.inputs*T.log(self.outputs)-(1-self.inputs)*T.log(1-self.outputs)
-        diff = (self.inputs - self.outputs)**2
+        ce = -self.inputs1 * T.log(self.outputs)-(1-self.inputs1)*T.log(1-self.outputs)
+        diff = (self.inputs1 - self.outputs)**2
         self.cost = ce.mean()
         self.grads = T.grad(self.cost, self.params)
         self.updates = []
@@ -73,14 +79,10 @@ class GSN():
         for i in xrange(len(self.params)):
             self.updates.append((self.params[i], self.params[i] - self.learning_rate * self.grads[i]))
 
-        #self.train_fn = theano.function(inputs = [self.inputs], updates=self.updates)
-
-        self.train_fn = theano.function(inputs = [self.inputs, self.learning_rate], outputs=self.cost, updates=self.updates)
-
+        self.train_fn = theano.function(inputs = [self.inputs1, self.learning_rate], outputs=self.cost, updates=self.updates)
         self.sample_fn = theano.function(inputs = [self.corrupted_input], outputs=self.outputs)
-
         self.samples = (self.outputs > 0.5).astype('float32')
-        self.step_fn = theano.function(inputs = [self.inputs], outputs=[self.corrupted_input, self.samples])
+        self.step_fn = theano.function(inputs = [self.inputs1], outputs=[self.corrupted_input, self.samples])
 
     def train(self, dataset, mbsz, epochs, lr):
         for e in xrange(epochs):
@@ -100,10 +102,8 @@ class GSN():
             cPickle.dump(self, f)
 
     def sample(self, num_samples, num_chains, burnin, interval):
-        dataset = numpy.load('/data/lisa/data/mnist/mnist-python/train_data.npy')
         samples = numpy.zeros((num_samples * 2+2, num_chains, 784))
-        #x = rng_numpy.binomial(size=(num_chains, 784), n=1, p=0.5).astype('float32')
-        x = (dataset[:num_chains] > 0.5).astype('float32')
+        x = dataset[:num_chains]
         for i in xrange(burnin):
             [cx, x] = map(lambda i: i.astype('float32'), self.step_fn(x))
         samples[0] = x
@@ -114,18 +114,6 @@ class GSN():
             samples[2*i+2] = x
 
         return samples
-
-
-#def draw_mnist(samples, output_dir, (x, y)):
-#    if not os.path.exists(output_dir):
-#        os.makedirs(output_dir)
-#    all = Image.new("RGB", (28*x, 28*y))
-#    for i in xrange(len(samples)):
-#        pic = samples[i].reshape(28, 28) * 255
-#        im = Image.fromarray(pic.astype('uint8'))
-#        all.paste(im, (28*(i//y), 28*(i%y)))
-#    all.save(os.path.join(output_dir, "all.png"))
-
 
 def draw_mnist(samples, output_dir, num_samples, num_chains, name):
     if not os.path.exists(output_dir):
@@ -138,7 +126,6 @@ def draw_mnist(samples, output_dir, num_samples, num_chains, name):
             all.paste(im, (28 * i, 28 * j))
     all.save(os.path.join(output_dir, 'samples_%d.png' % name))
 
-
 def main():
     num_units = [784, 1200, 1200, 784]
     input_noise = 0.3
@@ -146,13 +133,8 @@ def main():
     acts = ['tanh', 'tanh', 'sigmoid']
     learning_rate = 0.25
     gsn = GSN(num_units, input_noise, hidden_noises, acts)
-    dataset = numpy.load('/data/lisa/data/mnist/mnist-python/train_data.npy')
-    dataset = (dataset > 0.5).astype('float32')
-    dataset = dataset[:50000]
     gsn.train(dataset, 100, 1000, learning_rate)
     gsn.dumpto(dumpfile)
-
-
 
 if __name__ == '__main__':
     main()
