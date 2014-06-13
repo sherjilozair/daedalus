@@ -13,8 +13,18 @@ rng_theano = RandomStreams()
 dumpfile = 'model.pkl'
 
 with gzip.open(os.environ['MNIST']) as f:
-    dataset = cPickle.load(f)[0][0]
-    dataset = (dataset > 0.5).astype('float32')
+    dataset = cPickle.load(f)
+train = dataset[0]
+trainX = train[0]
+trainY = train[1]
+trainX = (trainX > 0.5).astype('float32')
+numpy.random.shuffle(trainX)
+trainX = list(trainX)
+trainY = list(trainY)
+trainXY = zip(trainX, trainY)
+trainXY.sort(key=lambda i: i[1])
+#trainX = trainX[:1000]
+
 
 def corrupt_SnP(x, corruption_level):
     if corruption_level == 0.0:
@@ -63,15 +73,15 @@ class HiddenLayers():
 
 class GSN():
     def __init__(self, num_units, input_noise, hidden_noises, acts):
-        self.inputs1 = T.matrix()
-        self.corrupted_input = corrupt_SnP(self.inputs1, input_noise)
+        self.inputs_end = T.matrix()
+        self.inputs_start = T.matrix()
+        self.corrupted_input = corrupt_SnP(self.inputs_start, input_noise)
         self.network = HiddenLayers(num_units, hidden_noises, self.corrupted_input, acts)
         self.outputs = self.network.outputs
         self.params = self.network.params
-        
-        p = (self.outputs ** self.inputs1) * (1-self.outputs) ** (1-self.inputs1)
-        p = p.mean(axis=0)
-        ce = - T.log(p)
+
+        ce = - T.mean(self.inputs_end * T.log(self.outputs) + (1-self.inputs_end) * T.log(1-self.outputs), axis=1)
+        #p = p.mean(axis=0)
         self.cost = ce.mean()
         self.grads = T.grad(self.cost, self.params)
         self.updates = []
@@ -80,20 +90,29 @@ class GSN():
         for i in xrange(len(self.params)):
             self.updates.append((self.params[i], self.params[i] - self.learning_rate * self.grads[i]))
 
-        self.train_fn = theano.function(inputs = [self.inputs1, self.learning_rate], outputs=self.cost, updates=self.updates)
+        self.train_fn = theano.function(inputs = [self.inputs_start, self.inputs_end, self.learning_rate], outputs=self.cost, updates=self.updates)
         self.sample_fn = theano.function(inputs = [self.corrupted_input], outputs=self.outputs)
         self.samples = (self.outputs > 0.5).astype('float32')
-        self.step_fn = theano.function(inputs = [self.inputs1], outputs=[self.corrupted_input, self.samples])
+        self.step_fn = theano.function(inputs = [self.inputs_start], outputs=[self.corrupted_input, self.samples])
 
-    def train(self, dataset, mbsz, epochs, lr):
+    def train(self, trainXY, mbsz, epochs, lr):
         for e in xrange(epochs):
-            rng_numpy.shuffle(dataset)
+            cum_cost = 0.0
+            count = 0
+            rng_numpy.shuffle(trainXY)
+            trainXY.sort(key=lambda i: i[1])
             t1 = time.clock()
-            costs = map(lambda i: self.train_fn(dataset[i:i+mbsz], lr), xrange(0, len(dataset), mbsz))
+            for i in xrange(0, len(trainXY), 2 * mbsz):
+                d1 = numpy.array(map(lambda i: i[0], trainXY[i+0*mbsz:i+1*mbsz]))
+                d2 = numpy.array(map(lambda i: i[0], trainXY[i+1*mbsz:i+2*mbsz]))
+                #import ipdb; ipdb.set_trace()
+                cost1 = self.train_fn(d1, d1, lr)
+                cost2 = self.train_fn(d2, d2, lr)
+                cum_cost += cost1 + cost2
+                count+=2
+                print e, i, cum_cost/float(count)
             t2 = time.clock()
-            print e, (t2 - t1), sum(costs) / float(len(costs)), lr
-            if e % 10 == 0:
-                self.dumpto(dumpfile)
+            print e, (t2 - t1), cum_cost/float(count), lr
             samples = self.sample(10, 10, 0, 1)
             draw_mnist(samples, 'samples/', 10, 10, e)
             lr *= 0.99
@@ -104,7 +123,7 @@ class GSN():
 
     def sample(self, num_samples, num_chains, burnin, interval):
         samples = numpy.zeros((num_samples * 2+2, num_chains, 784))
-        x = dataset[:num_chains]
+        x = trainX[:num_chains]
         for i in xrange(burnin):
             [cx, x] = map(lambda i: i.astype('float32'), self.step_fn(x))
         samples[0] = x
@@ -134,7 +153,7 @@ def main():
     acts = ['tanh', 'tanh', 'sigmoid']
     learning_rate = 0.25
     gsn = GSN(num_units, input_noise, hidden_noises, acts)
-    gsn.train(dataset, 100, 1000, learning_rate)
+    gsn.train(trainXY, 50, 1000, learning_rate)
     gsn.dumpto(dumpfile)
 
 if __name__ == '__main__':
