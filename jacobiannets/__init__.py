@@ -13,6 +13,9 @@ import operator as op
 sigm = T.nnet.sigmoid
 tanh = T.tanh
 
+def id(x):
+	return x
+
 theano.config.compute_test_value = 'raise'
 
 from theano.sandbox.linalg.ops import det
@@ -22,13 +25,16 @@ class Layer():
         self.act = act
         self.W = self.init_weight(n_in, n_out, act)
         self.b = self.init_bias(n_out)
-        self.params = [self.W, self.b]
+        self.params = [self.W]
 
     def init_weight(self, n_in, n_out, act):
         a = numpy.sqrt(6. / (n_in + n_out))
         if act == sigm:
             a *= 4.
-        return theano.shared(numpy.random.uniform(size=(n_out, n_in), low=-a, high=a))
+        W = numpy.random.uniform(size=(n_out, n_in), low=-a, high=a)
+        Q, R = numpy.linalg.qr(W)
+        eye = numpy.eye(n_out)
+        return theano.shared(eye)
 
     def init_bias(self, n_out):
         return theano.shared(numpy.zeros(n_out,))
@@ -50,13 +56,13 @@ class JacobianNets():
 		self.net = MLP(n_in, n_out, hls, acts)
 		self.params = self.net.params
 		self.X = T.vector('X')
-		self.X.tag.test_value = numpy.random.binomial(size=(784, ), n=1, p=0.5).astype('float32')
+		self.X.tag.test_value = numpy.random.uniform(size=(784, ), high=1, low=0.0).astype('float32')
 		self.lr = T.scalar('lr')
 		self.lr.tag.test_value = 0.25
 		self.Z = self.net(self.X)
 		self.W = self.net.layers[0].W
-		self.dtanh = 1 - self.Z**2
-		self.J = self.dtanh[:, numpy.newaxis] * self.W
+		#self.dtanh = 1 - self.Z**2
+		self.J = self.W
 		self.logpx = T.log(T.abs_(det(self.J)))
 		self.grads = T.grad(self.logpx, self.net.params)
 		self.updates = map(lambda (param, grad): (param, param - self.lr * grad), zip(self.params, self.grads))
@@ -76,7 +82,7 @@ class JacobianNets():
 with gzip.open(os.environ['MNIST']) as f:
 	dataset = cPickle.load(f)[0][0][:5]
 
-jnet = JacobianNets(784, 784, [], [tanh])
+jnet = JacobianNets(784, 784, [], [id])
 jnet.train(dataset, 500, 10**2, 0.99)
 
 # Z = tanh(x * W + b)					# b * dimZ

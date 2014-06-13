@@ -64,13 +64,13 @@ class HiddenLayers():
 class GSN():
     def __init__(self, num_units, input_noise, hidden_noises, acts):
         self.inputs1 = T.matrix()
-        self.inputs2 = T.matrix()
         self.corrupted_input = corrupt_SnP(self.inputs1, input_noise)
         self.network = HiddenLayers(num_units, hidden_noises, self.corrupted_input, acts)
         self.outputs = self.network.outputs
         self.params = self.network.params
-        ce = -self.inputs1 * T.log(self.outputs)-(1-self.inputs1)*T.log(1-self.outputs)
-        diff = (self.inputs1 - self.outputs)**2
+        p = (self.outputs ** self.inputs1) * (1-self.outputs) ** (1-self.inputs1)
+        p = p.mean(axis=0)
+        ce = - T.log(p)
         self.cost = ce.mean()
         self.grads = T.grad(self.cost, self.params)
         self.updates = []
@@ -128,7 +128,7 @@ def draw_mnist(samples, output_dir, num_samples, num_chains, name):
 
 def main():
     num_units = [784, 1200, 1200, 784]
-    input_noise = 0.3
+    input_noise = 0.6
     hidden_noises = [(0., 0.), (0., 0.), (0., 0.)]
     acts = ['tanh', 'tanh', 'sigmoid']
     learning_rate = 0.25
