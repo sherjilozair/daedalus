@@ -68,6 +68,7 @@ class GSN():
         self.network = HiddenLayers(num_units, hidden_noises, self.corrupted_input, acts)
         self.outputs = self.network.outputs
         self.params = self.network.params
+        
         p = (self.outputs ** self.inputs1) * (1-self.outputs) ** (1-self.inputs1)
         p = p.mean(axis=0)
         ce = - T.log(p)
