@@ -1,5 +1,7 @@
 //  Draw a line on 2D array of boolean. You will be given start point and end point co-ordinates.
 
+// this works fine for m < 1. for m > 1, mirror this algorithm with y <-> x
+
 #include <iostream>
 #include <vector>
 #include <cmath>
