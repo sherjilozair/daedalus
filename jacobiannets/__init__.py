@@ -79,11 +79,12 @@ class JacobianNets():
 			print epoch, logpxs / dataset.shape[0]
 			lr *= lr_decay
 
-with gzip.open(os.environ['MNIST']) as f:
-	dataset = cPickle.load(f)[0][0][:5]
+if __name__ == '__main__':
+	with gzip.open(os.environ['MNIST']) as f:
+		dataset = cPickle.load(f)[0][0][:5]
 
-jnet = JacobianNets(784, 784, [], [id])
-jnet.train(dataset, 500, 10**2, 0.99)
+	jnet = JacobianNets(784, 784, [], [id])
+	jnet.train(dataset, 500, 10**2, 0.99)
 
 # Z = tanh(x * W + b)					# b * dimZ
 # Z + e2 = tanh(x * W + b + e1 * W)		# b * dimZ
