@@ -12,6 +12,9 @@ import operator as op
 
 import random
 
+from theano.tensor.shared_randomstreams import RandomStreams
+rng_theano = RandomStreams()
+
 sigm = T.nnet.sigmoid
 tanh = T.tanh
 ce = T.nnet.binary_crossentropy
@@ -49,7 +52,7 @@ class VGSN():
         s = MLP(dimX, dimX, hls, acts)
         
         x = T.fmatrix("x")
-        tx = t(x)
+        tx = rng_theano.binomial(n=1, p=t(x), dtype='float32')
         stx = s(tx)
 
         cs = ce(stx, x).mean(axis=1).mean(axis=0)
@@ -58,7 +61,7 @@ class VGSN():
         self.train_s = theano.function([x], cs, updates=supdates)
 
         xp = T.fmatrix("x'")
-        sxp = s(xp)
+        sxp = rng_theano.binomial(n=1, p=s(xp), dtype='float32')
         tsxp = t(sxp)
 
         ct = ce(tsxp, xp).mean(axis=1).mean(axis=0)
@@ -66,7 +69,7 @@ class VGSN():
         tupdates = map(lambda (param, grad): (param, param - lr * grad), zip(t.params, tgrads))
         self.train_t = theano.function([xp], ct, updates=tupdates)
 
-        self.t_fn = theano.function([x], t(x))
+        self.t_fn = theano.function([x], rng_theano.binomial(n=1, p=t(x), dtype='float32'))
 
     def train(self, D, epochs, mbsz):
         ind_s = range(D.shape[0])
@@ -88,10 +91,10 @@ class VGSN():
         C = 10
         T = 10
         b = D[:C]
-        samples = numpy.zeros((C * T), D.shape[1])
+        samples = numpy.zeros((C * T, D.shape[1]))
         for t in xrange(T):
             samples[C*t:C*(t+1)] = b
-            b = self.t_fn(b)
+            b = self.t_fn(b).astype('float32')
         draw_mnist(samples, 'samples/', T, C, name)
 
 def draw_mnist(samples, output_dir, num_samples, num_chains, name):
@@ -100,12 +103,10 @@ def draw_mnist(samples, output_dir, num_samples, num_chains, name):
     all = Image.new("RGB", (28*num_samples, 28*num_chains))
     for i in xrange(num_samples):
         for j in xrange(num_chains):
-            pic = (samples[i, j].reshape(28, 28)) * 255
+            pic = samples[i*num_chains+j].reshape(28, 28) * 255
             im = Image.fromarray(pic)
-            all.paste(im, (28 * i, 28 * j))
+            all.paste(im, (28*i, 28*j))
     all.save(os.path.join(output_dir, 'samples_%d.png' % name))
-
-
 
 if __name__ == '__main__':
     with gzip.open(os.environ['MNIST']) as f:
