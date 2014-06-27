@@ -10,7 +10,6 @@ import gzip
 import cPickle
 import operator as op
 
-
 sigm = T.nnet.sigmoid
 tanh = T.tanh
 

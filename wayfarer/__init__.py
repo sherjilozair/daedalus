@@ -7,7 +7,7 @@ import random, numpy
 import urllib, json, csv, os
 import cPickle
 
-def solveMTSP(times, K, max_iter=10000, pop_size=500):
+def solveMTSP(times, K, max_iter=5000, pop_size=500):
 	N = len(times) - 1
 	population = initialize_population(pop_size, N, K)		# initialize randomly
 	prev_cost = -1
@@ -19,7 +19,7 @@ def solveMTSP(times, K, max_iter=10000, pop_size=500):
 		if cost != prev_cost:
 			prev_cost = cost
 			print iter, cost/60.0
-	return min(population, key=lambda c: comptue_fitness2(c, times))
+	return min(population, key=lambda c: comptue_fitness1(c, times))
 
 def initialize_population(pop_size, N, K):
 	return [initialize_chromosome(N, K) for i in xrange(pop_size)]
@@ -150,5 +150,6 @@ def distance_matrix(row):
 #row = "BNJBHA207	25.2560821,86.9849308	121009	25.4408654,87.253826	BNJ_AD_00224	25.3674628,87.0021512	120290	25.24421,86.74468	121040	25.1683013,86.8922723	121061	25.1466223,86.9813617	BNJ00010	25.2177422,86.9924358	120292	25.3974889,86.859321	120213	25.249746,86.9655599	121085	25.9111958,86.8149079	120203	25.2177422,86.9924358	121109	25.4689681,87.1223362	BNJ00015	25.150192,87.1722037	BN0038	25.2177422,86.9924358"
 row = "BNJRAN235	22.8026354,86.2043594	120786	22.95544349,86.05359277	126013	22.77282357,86.18860739	BNJ_AD_00247	22.65392388,86.35157869	120789	22.83703665,86.22863212	BN0024	22.81173565,86.17007587	126015	22.78672393,86.16093198	120405	22.80810555,86.21242414	120787	22.76741822,86.2204385	126008	22.81447755,86.10412226	BNJ_AD_00130	22.51070845,86.45754708	BNJ_AD_00186	22.27904345,86.7278621"
 row = row.replace("\t", ";")
+row = "SSO;Delhi,India;DB1;Agra,India;DB2;Bhopal,India;DB3;Patna,India;DB4;Ahmedabad,India;DB5;Ludhiana,India;DB6;Dehradun,India;DB7;Nagpur,India;"
 times = distance_matrix(row)
-ret = solveMTSP(times, 8)
+ret = solveMTSP(times, 4)
