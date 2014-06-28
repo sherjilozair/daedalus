@@ -50,15 +50,20 @@ def sample_bernoulli(pz):
     return rng_theano.binomial(n=1, p=pz, dtype='float32')
 
 class Disentangler():
-    def __init__(self, dimX, dimZ, hls, acts, lr):
-        pzx = MLP(dimX, dimZ, hls, acts)
+    def __init__(self, dimX, dimZ, hls, acts, lr, K):
+        f = MLP(dimX, dimZ, hls, acts)
         x = T.fmatrix('x')
-        pz = pzx(x)
-        z = sample_bernoulli(pz)
-        logpzz = (-ce(pz, z)).sum(axis=1).mean(axis=0)
-        pzx_grads = T.grad(logpzz, pzx.params, consider_constant=[z])
-        updates = map(lambda (param, grad): (param, param - lr * grad), zip(pzx.params, pzx_grads))
-        self.train_fn = theano.function([x], logpzz, updates=updates)
+        z = f(x)
+        cost = self.get_moments_error(z, K)
+        grads = T.grad(cost, f.params)
+        updates = map(lambda (param, grad): (param, param - lr * grad), zip(f.params, grads))
+        self.train_fn = theano.function([x], cost, updates=updates)
+
+    def get_moments_error(self, z, K):
+        cost = 0.
+        for i in xrange(1, K+1):
+            cost += ((z**i).mean(axis=0) - (1./(i+1)))**2
+        return cost.mean()
 
     def train(self, D, epochs, mbsz):
         ind = range(D.shape[0])
@@ -73,7 +78,7 @@ class Disentangler():
             print e, cost / mbsz
 
 if __name__ == '__main__':
-    model = Disentangler(784, 100, [1200, 1200], [tanh, tanh, sigm], 0.01)
+    model = Disentangler(784, 100, [1200, 1200], [tanh, tanh, sigm], 0.01, 10)
     with gzip.open(os.environ['MNIST']) as f:
         D = cPickle.load(f)[0][0]
     model.train(D, 500, 100)
