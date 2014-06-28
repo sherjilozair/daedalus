@@ -80,6 +80,7 @@ class Disentangler():
         for e in xrange(epochsf):
             random.shuffle(ind)
             cost = 0.0
+            #self.dump_samples(e)
             for b in xrange(mbsz):
                 bs = D[ind[mbsz * b: mbsz * (b+1)]]
                 cs = self.trainf_fn(bs)
@@ -89,21 +90,22 @@ class Disentangler():
         for e in xrange(epochsg):
             random.shuffle(ind)
             cost = 0.0
-            self.dump_samples(D, e)
+            self.dump_samples(e)
             for b in xrange(mbsz):
                 bs = D[ind[mbsz * b: mbsz * (b+1)]]
                 cs = self.traing_fn(bs)
                 cost += cs
             print "g", e, cost / mbsz
 
-    def dump_samples(self, D, name):
+    def dump_samples(self, name):
         C = 10
         T = 10
-        b = D[:C]
         samples = numpy.zeros((C * T, D.shape[1]))
         for t in xrange(T):
+            z = numpy.random.uniform(low=0., high=1., size=(C, 100)).astype('float32')
+            b = self.sample_fn(z)
             samples[C*t:C*(t+1)] = b
-            b = self.t_fn(b).astype('float32')
+           
         draw_mnist(samples, 'samples/', T, C, name)
 
 def draw_mnist(samples, output_dir, num_samples, num_chains, name):
