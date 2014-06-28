@@ -123,7 +123,7 @@ if __name__ == '__main__':
     model = Disentangler(784, 100, [1200, 1200], [tanh, tanh, sigm], 0.01, 10)
     with gzip.open(os.environ['MNIST']) as f:
         D = (cPickle.load(f)[0][0] > 0.5).astype('float32')
-    model.train(D, 50, 100, 100)
+    model.train(D, 30, 100, 100)
 
 
 
