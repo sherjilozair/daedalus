@@ -54,10 +54,20 @@ class Disentangler():
         f = MLP(dimX, dimZ, hls, acts)
         x = T.fmatrix('x')
         z = f(x)
-        cost = self.get_moments_error(z, K)
-        grads = T.grad(cost, f.params)
-        updates = map(lambda (param, grad): (param, param - lr * grad), zip(f.params, grads))
-        self.train_fn = theano.function([x], cost, updates=updates)
+        cost_f = self.get_moments_error(z, K)
+        grads_f = T.grad(cost_f, f.params)
+        updates_f = map(lambda (param, grad): (param, param - lr * grad), zip(f.params, grads_f))
+        self.trainf_fn = theano.function([x], cost_f, updates=updates_f)
+
+        g = MLP(dimZ, dimX, hls, acts)
+        rx = g(z)
+        cost_g = ce(rx, x).mean(axis=1).mean(axis=0)
+        grads_g = T.grad(cost_g, g.params)
+        updates_g = map(lambda (param, grad): (param, param - lr * grad), zip(g.params, grads_g))
+        self.traing_fn = theano.function([x], cost_g, updates=updates_g)
+
+        z = T.fmatrix('z')
+        self.sample_fn = theano.function([z], g(z))
 
     def get_moments_error(self, z, K):
         cost = 0.
@@ -65,23 +75,53 @@ class Disentangler():
             cost += ((z**i).mean(axis=0) - (1./(i+1)))**2
         return cost.mean()
 
-    def train(self, D, epochs, mbsz):
+    def train(self, D, epochsf, epochsg, mbsz):
         ind = range(D.shape[0])
-        for e in xrange(epochs):
+        for e in xrange(epochsf):
             random.shuffle(ind)
             cost = 0.0
-            #self.dump_samples(D, e)
             for b in xrange(mbsz):
                 bs = D[ind[mbsz * b: mbsz * (b+1)]]
-                cs = self.train_fn(bs)
+                cs = self.trainf_fn(bs)
                 cost += cs
-            print e, cost / mbsz
+            print "f", e, cost / mbsz
+
+        for e in xrange(epochsg):
+            random.shuffle(ind)
+            cost = 0.0
+            self.dump_samples(D, e)
+            for b in xrange(mbsz):
+                bs = D[ind[mbsz * b: mbsz * (b+1)]]
+                cs = self.traing_fn(bs)
+                cost += cs
+            print "g", e, cost / mbsz
+
+    def dump_samples(self, D, name):
+        C = 10
+        T = 10
+        b = D[:C]
+        samples = numpy.zeros((C * T, D.shape[1]))
+        for t in xrange(T):
+            samples[C*t:C*(t+1)] = b
+            b = self.t_fn(b).astype('float32')
+        draw_mnist(samples, 'samples/', T, C, name)
+
+def draw_mnist(samples, output_dir, num_samples, num_chains, name):
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+    all = Image.new("RGB", (28*num_samples, 28*num_chains))
+    for i in xrange(num_samples):
+        for j in xrange(num_chains):
+            pic = samples[i*num_chains+j].reshape(28, 28) * 255
+            im = Image.fromarray(pic)
+            all.paste(im, (28*i, 28*j))
+    all.save(os.path.join(output_dir, 'samples_%d.png' % name))
 
 if __name__ == '__main__':
     model = Disentangler(784, 100, [1200, 1200], [tanh, tanh, sigm], 0.01, 10)
     with gzip.open(os.environ['MNIST']) as f:
-        D = cPickle.load(f)[0][0]
-    model.train(D, 500, 100)
+        D = (cPickle.load(f)[0][0] > 0.5).astype('float32')
+    model.train(D, 50, 100, 100)
 
 
 
