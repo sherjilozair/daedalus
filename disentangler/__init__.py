@@ -74,7 +74,7 @@ class Disentangler():
         d = z.shape[1]
         t1 = (4./3.)**d
         t2 = -2. * (1. + 2. * z - 2. * z**2).prod(axis=1).sum(axis=0) / n
-        t4 = (1 - abs(z[:, numpy.newaxis] - z)).prod(axis=2).sum()
+        t4 = (1 - abs(z[:, numpy.newaxis, :] - z)).prod(axis=2).sum()
         t3 = (2.**d) * (t4) / (n**2)
         return t1 + t2 + t3
 
