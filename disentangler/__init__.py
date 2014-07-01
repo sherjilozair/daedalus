@@ -54,10 +54,12 @@ class Disentangler():
         f = MLP(dimX, dimZ, hls, acts)
         x = T.fmatrix('x')
         z = f(x)
-        cost_f = self.get_moments_error(z, K)
+        costs_f = self.get_moments_error(z, K)
+        cost_f = sum(costs_f)
+
         grads_f = T.grad(cost_f, f.params)
         updates_f = map(lambda (param, grad): (param, param - lr * grad), zip(f.params, grads_f))
-        self.trainf_fn = theano.function([x], cost_f, updates=updates_f)
+        self.trainf_fn = theano.function([x], costs_f, updates=updates_f)
 
         g = MLP(dimZ, dimX, hls, acts)
         rx = g(z)
@@ -69,22 +71,20 @@ class Disentangler():
         z = T.fmatrix('z')
         self.sample_fn = theano.function([z], g(z))
 
-    def get_moments_error(self, z, K):
-        cost = 0.
-        for i in xrange(1, K+1):
-            cost += ((z**i).mean(axis=0) - (1./(i+1)))**2
-        return cost.mean()
+    def get_moments_costs(self, z, K):
+        costs = [(((z**i).mean(axis=0) - (1./(i+1)))**2).mean() for i in xrange(1, K+1)] 
+        return costs
 
     def train(self, D, epochsf, epochsg, mbsz):
         ind = range(D.shape[0])
         for e in xrange(epochsf):
             random.shuffle(ind)
-            cost = 0.0
+            cost = [0] * len(10)
             #self.dump_samples(e)
             for b in xrange(mbsz):
                 bs = D[ind[mbsz * b: mbsz * (b+1)]]
-                cs = self.trainf_fn(bs)
-                cost += cs
+                costs = self.trainf_fn(bs)
+                cost += sum(costs)/len(costs)
             print "f", e, cost / mbsz
 
         for e in xrange(epochsg):
