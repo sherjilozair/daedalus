@@ -50,24 +50,26 @@ def sample_bernoulli(pz):
     return rng_theano.binomial(n=1, p=pz, dtype='float32')
 
 class Disentangler():
-    def __init__(self, dimX, dimZ, hls, acts, lr):
-        f = MLP(dimX, dimZ, hls, acts)
+    def __init__(self, dimX, dimZ, hls, acts):
+    	self.dimZ = dimZ
+        self.f = MLP(dimX, dimZ, hls, acts)
+        self.g = MLP(dimZ, dimX, hls, acts)
+        self.params = self.f.params + self.g.params
         x = T.fmatrix('x')
-        z = f(x)
-        cost_f = self.uniformity(z)
-        grads_f = T.grad(cost_f, f.params)
-        updates_f = map(lambda (param, grad): (param, param - lr * grad), zip(f.params, grads_f))
-        self.trainf_fn = theano.function([x], costs_f, updates=updates_f)
-
-        g = MLP(dimZ, dimX, hls, acts)
-        rx = g(z)
-        cost_g = ce(rx, x).mean(axis=1).mean(axis=0)
-        grads_g = T.grad(cost_g, g.params)
-        updates_g = map(lambda (param, grad): (param, param - lr * grad), zip(g.params, grads_g))
-        self.traing_fn = theano.function([x], cost_g, updates=updates_g)
+        lr = T.scalar('lr')
+        alpha = T.scalar('alpha')
+        z = self.f(x)
+        rx = self.g(z)
+        cost_uniformity = self.uniformity(z)
+        cost_recons = ce(rx, x).mean(axis=1).mean(axis=0)
+        cost = cost_uniformity + alpha * cost_recons
+        grads = T.grad(cost, self.params)
+        updates = map(lambda (param, grad): (param, param - lr * grad), zip(self.params, grads))
+        self.train_fn = theano.function([x, lr, alpha], [cost_uniformity, cost_recons], updates=updates)
 
         z = T.fmatrix('z')
-        self.sample_fn = theano.function([z], g(z))
+        self.sample_fn = theano.function([z], self.g(z))
+        self.infer_fn = theano.function([x], self.f(x))
 
     def uniformity(self, z):
         n = z.shape[0]
@@ -78,34 +80,29 @@ class Disentangler():
         t4 = t1 - 2. + (2.**d)
         return (t1 + t2 + t3)/t4
 
-    def train(self, D, epochsf, epochsg, mbsz):
+    def train(self, D, epochs, mbsz, lr_init, lr_scale, alpha):
         ind = range(D.shape[0])
-        for e in xrange(epochsf):
+        lr = lr_init
+        for e in xrange(epochs):
+            cPickle.dump(self, open("models/model_%s.pkl" % e, 'w'))
             random.shuffle(ind)
-            cost = [0] * len(10)
-            #self.dump_samples(e)
-            for b in xrange(mbsz):
-                bs = D[ind[mbsz * b: mbsz * (b+1)]]
-                costs = self.trainf_fn(bs)
-                cost += sum(costs)/len(costs)
-            print "f", e, cost / mbsz
-
-        for e in xrange(epochsg):
-            random.shuffle(ind)
-            cost = 0.0
+            cost1 = 0.0
+            cost2 = 0.0
             self.dump_samples(e)
             for b in xrange(mbsz):
                 bs = D[ind[mbsz * b: mbsz * (b+1)]]
-                cs = self.traing_fn(bs)
-                cost += cs
-            print "g", e, cost / mbsz
-
+                [cs1, cs2] = self.train_fn(bs, lr, alpha)
+                cost1 += cs1
+                cost2 += cs2
+            lr *= lr_scale
+            print "f g", e, cost1 / mbsz, cost2 / mbsz, lr
+        
     def dump_samples(self, name):
         C = 10
         T = 10
         samples = numpy.zeros((C * T, D.shape[1]))
         for t in xrange(T):
-            z = numpy.random.uniform(low=0., high=1., size=(C, 100)).astype('float32')
+            z = numpy.random.uniform(low=0., high=1., size=(C, self.dimZ)).astype('float32')
             b = self.sample_fn(z)
             samples[C*t:C*(t+1)] = b
            
@@ -123,10 +120,10 @@ def draw_mnist(samples, output_dir, num_samples, num_chains, name):
     all.save(os.path.join(output_dir, 'samples_%d.png' % name))
 
 if __name__ == '__main__':
-    model = Disentangler(784, 30, [1200, 1200], [tanh, tanh, sigm], 0.01)
+    model = Disentangler(784, 15, [1200, 1200], [tanh, tanh, sigm])
     with gzip.open(os.environ['MNIST']) as f:
         D = (cPickle.load(f)[0][0] > 0.5).astype('float32')
-    model.train(D, 30, 100, 100)
+    model.train(D, 500, 100, 0.000001, 0.99, 20000000)
 
 
 
