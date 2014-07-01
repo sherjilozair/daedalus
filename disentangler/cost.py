@@ -9,7 +9,8 @@ def uniformity(z):
 	t2 = -2. * (1. + 2. * z - 2. * z**2).prod(axis=1).sum(axis=0) / n
 	t4 = (1 - abs(z[:, numpy.newaxis] - z)).prod(axis=2).sum()
 	t3 = (2.**d) * (t4) / (n**2)
-	return t1 + t2 + t3
+	t5 = t1 - 2. + (2.**d)
+	return (t1 + t2 + t3)/t5
 
 sigmoid = lambda x: 1. / (1. + numpy.exp(-x))
 sigmoid = lambda x: numpy.exp(x) / (1. + numpy.exp(x))

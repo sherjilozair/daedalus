@@ -76,9 +76,9 @@ class Disentangler():
         d = z.shape[1]
         t1 = (4./3.)**d
         t2 = -2. * (1. + 2. * z - 2. * z**2).prod(axis=1).sum(axis=0) / n
-        t4 = (1 - abs(z[:, numpy.newaxis, :] - z)).prod(axis=2).sum()
-        t3 = (2.**d) * (t4) / (n**2)
-        return t1 + t2 + t3
+        t3 = (2.**d) * (1 - abs(z[:, numpy.newaxis, :] - z)).prod(axis=2).sum() / (n**2)
+        t4 = t1 - 2. + (2.**d)
+        return (t1 + t2 + t3)/t4
 
     def train(self, D, epochs, mbsz, lr_init, lr_scale, alpha):
         ind = range(D.shape[0])
