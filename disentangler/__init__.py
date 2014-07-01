@@ -50,13 +50,11 @@ def sample_bernoulli(pz):
     return rng_theano.binomial(n=1, p=pz, dtype='float32')
 
 class Disentangler():
-    def __init__(self, dimX, dimZ, hls, acts, lr, K):
+    def __init__(self, dimX, dimZ, hls, acts, lr):
         f = MLP(dimX, dimZ, hls, acts)
         x = T.fmatrix('x')
         z = f(x)
-        costs_f = self.get_moments_error(z, K)
-        cost_f = sum(costs_f)
-
+        cost_f = self.uniformity(z)
         grads_f = T.grad(cost_f, f.params)
         updates_f = map(lambda (param, grad): (param, param - lr * grad), zip(f.params, grads_f))
         self.trainf_fn = theano.function([x], costs_f, updates=updates_f)
@@ -71,9 +69,14 @@ class Disentangler():
         z = T.fmatrix('z')
         self.sample_fn = theano.function([z], g(z))
 
-    def get_moments_costs(self, z, K):
-        costs = [(((z**i).mean(axis=0) - (1./(i+1)))**2).mean() for i in xrange(1, K+1)] 
-        return costs
+    def uniformity(self, z):
+        n = z.shape[0]
+        d = z.shape[1]
+        t1 = (4./3.)**d
+        t2 = -2. * (1. + 2. * z - 2. * z**2).prod(axis=1).sum(axis=0) / n
+        t4 = (1 - abs(z[:, numpy.newaxis, :] - z)).prod(axis=2).sum()
+        t3 = (2.**d) * (t4) / (n**2)
+        return t1 + t2 + t3
 
     def train(self, D, epochsf, epochsg, mbsz):
         ind = range(D.shape[0])
@@ -120,7 +123,7 @@ def draw_mnist(samples, output_dir, num_samples, num_chains, name):
     all.save(os.path.join(output_dir, 'samples_%d.png' % name))
 
 if __name__ == '__main__':
-    model = Disentangler(784, 100, [1200, 1200], [tanh, tanh, sigm], 0.01, 10)
+    model = Disentangler(784, 30, [1200, 1200], [tanh, tanh, sigm], 0.01)
     with gzip.open(os.environ['MNIST']) as f:
         D = (cPickle.load(f)[0][0] > 0.5).astype('float32')
     model.train(D, 30, 100, 100)
