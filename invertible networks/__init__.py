@@ -23,7 +23,7 @@ class Layer():
     def __init__(self, dim, act):
         self.act = act
         self.dim = dim
-        interval = numpy.sqrt(3./dim)
+        interval = numpy.sqrt(3./dim**4)
         if act == sigm:
             interval *= 4.
         self.L = self.init_L(dim, interval)
@@ -68,11 +68,13 @@ class InvertibleNetwork():
         self.params = self.mlp.params
         self.x = T.fmatrix('x')
         self.zx = self.mlp(self.x)
-        self.cost = self.uniformity(self.zx)
-        self.grads = T.grad(self.cost, self.params)
+        self.zxnn = self.nearest_neighbour(self.zx)
+        self.objective = ((self.zx - self.zxnn)**2).min(axis=1).mean()
+        #self.cost = self.uniformity(self.zx)
+        self.grads = T.grad(self.objective, self.params)#, consider_constant=[self.zxnn])
         self.lr = T.scalar('lr')
-        self.updates = map(lambda (param, grad): (param, param - self.lr * grad), zip(self.params, self.grads))
-        self.train_fn = theano.function([self.x, self.lr], self.cost, updates=self.updates)
+        self.updates = map(lambda (param, grad): (param, param + self.lr * grad), zip(self.params, self.grads))
+        self.train_fn = theano.function([self.x, self.lr], self.objective, updates=self.updates)
         self.infer_fn = theano.function([self.x], self.zx)
 
     def train(self, D, epochs, mbsz, lr):
@@ -80,6 +82,7 @@ class InvertibleNetwork():
         num_batches = D.shape[0] / mbsz
         prevcostn = 0.
         inc = 0
+        print nearest_neighbour(numpy.random.randn(100, 784))
         for e in xrange(epochs):
             random.shuffle(ind)
             cost = 0.
@@ -87,14 +90,24 @@ class InvertibleNetwork():
                 bs = D[ind[mbsz * b: mbsz * (b+1)]]
                 cs = self.train_fn(bs, lr)
                 cost += cs
+                print "minibatch", e, b, cs, lr
             costn = cost / num_batches
-            if (costn > prevcostn):
+            if (costn < prevcostn):
                 inc += 1
-                if inc > 10:
+                if inc > 0:
                     inc = 0
                     lr *= 0.5
             prevcostn = costn
-            print "f", e, costn, lr
+            print "epoch", e, costn, lr, inc, nearest_neighbour(numpy.random.randn(100, 784))
+
+    def nearest_neighbour(self, z):
+        d = ((z - z[:, numpy.newaxis, :])**2).min(axis=2)
+        ind = [(d + (d.max()+1)* T.eye(d.shape[0])).argmin(axis=0)]
+        #ind = rng_theano.random_integers(size=(z.shape[0],), high=z.shape[0]-1)
+        #ind = numpy.arange(100)
+        #numpy.random.shuffle(ind)
+        znn = z[ind]
+        return znn
 
     def uniformity(self, z):
         n = z.shape[0]
@@ -103,7 +116,6 @@ class InvertibleNetwork():
         t2 = -2. * (1. + 2. * z - 2. * z**2).prod(axis=1).sum(axis=0) / n
         t3 = (2.**d) * (1 - abs(z[:, numpy.newaxis, :] - z)).prod(axis=2).sum() / (n**2)
         t4 = t1 - 2. + (2.**d)
-
         return (t1 + t2 + t3)/t4
 
     def dump_samples(self, name):
@@ -128,15 +140,21 @@ def draw_mnist(samples, output_dir, num_samples, num_chains, name):
             all.paste(im, (28*i, 28*j))
     all.save(os.path.join(output_dir, 'samples_%d.png' % name))
 
+def nearest_neighbour(z):
+    d = ((z - z[:, numpy.newaxis, :])**2).min(axis=2)
+    ind = [(d + (d.max()+1)* numpy.eye(d.shape[0])).argmin(axis=0)]
+    znn = z[ind]
+    return ((z - znn)**2).min(axis=1).mean()
 
 if __name__ == '__main__':
-    model = InvertibleNetwork(2, [tanh, tanh, tanh, tanh, tanh, sigm])
-    D = numpy.load("../moons.npy")
-    D = D - numpy.mean(D, axis=0)
-    D = D / numpy.max(abs(D), axis=0)
-    D = (D + 1.) / 2.
-    D = D.astype('float32')
-    model.train(D, 1000, 1000, 1.)
+    model = InvertibleNetwork(784, [tanh]*1 + [sigm])
+    D = numpy.load("../mnist.npy")
+    #D = (D > 0.5).astype('float32')
+    #D = D - numpy.mean(D, axis=0)
+    #D = D / numpy.max(abs(D), axis=0)
+    #D = (D + 1.) / 2.
+    #D = D.astype('float32')
+    model.train(D, 5, 100, .001)
 
 
 
