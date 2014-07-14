@@ -50,13 +50,14 @@ class MLP():
 
 class EGSN():
     def __init__(self, dimX, dimZ):
-        self.lvl = 0.2
+        self.lvl = 0.5
         self.dimX = dimX
         self.dimZ = dimZ
         self.encoder = MLP(dimX, dimZ, [1200], [tanh, sigm])
         self.decoder = MLP(dimZ, dimX, [1200], [tanh, sigm])
         x = T.fmatrix('x')
         lr = T.scalar('lr')
+        alpha = T.scalar('alpha')
         rx = self.decoder(self.encoder(x))
         cost1 = ce(rx, x).mean(axis=1).mean(axis=0)
         z = self.encoder(x)
@@ -64,14 +65,20 @@ class EGSN():
         self.denoiser = MLP(dimZ, dimZ, [1200], [tanh, sigm])
         rz = self.denoiser(nz)
         cost2 = ce(rz, z).mean(axis=1).mean(axis=0)
-        cost = cost1 + cost2
-        self.params = self.encoder.params + self.decoder.params + self.denoiser.params
-        grads = T.grad(cost, self.params)
-        updates = map(lambda (param, grad): (param, param - lr * grad), zip(self.params, grads))
+        #cost = cost1 + alpha * cost2
+        self.ae_params = self.encoder.params + self.decoder.params
+        self.gsn_params = self.denoiser.params
+        grads_ae = T.grad(cost1, self.ae_params)
+        grads_gsn = T.grad(cost2, self.gsn_params)
+        updates_ae = map(lambda (param, grad): (param, param - lr * grad), zip(self.ae_params, grads_ae))
+        updates_gsn = map(lambda (param, grad): (param, param - lr * grad), zip(self.gsn_params, grads_gsn))
+        updates = updates_ae + updates_gsn
         self.train_fn = theano.function([x, lr], [cost1, cost2], updates=updates, allow_input_downcast=True)
         self.encoder_fn = theano.function([x], self.encoder(x), allow_input_downcast=True)
         z = T.fmatrix('z')
         self.decoder_fn = theano.function([z], self.decoder(z), allow_input_downcast=True)
+        nz = T.fmatrix('nz')
+        self.denoiser_fn = theano.function([nz], self.denoiser(nz), allow_input_downcast=True)
 
     def train(self, D, epochs, mbsz, lr_init, lr_scale):
         ind = range(D.shape[0])
@@ -105,17 +112,17 @@ class EGSN():
 
     def dump_samples(self, D, name):
         C = 10
-        T = 10
+        T = 20
         samples = numpy.zeros((C * T, D.shape[1]))
-        #z = numpy.random.uniform(size=(C, self.dimZ))
-        #px = self.sample_fn(z)
-        #x = sample_bernoulli_fn(px)
         px = x = D[:C]
         z = self.encoder_fn(x)
-        for t in xrange(T):
+        for t in xrange(0, T, 2):
             samples[C*t:C*(t+1)] = px
             zz = self.add_noise_np(z, self.lvl)
-            px = self.decoder_fn(zz)
+            pxx = self.decoder_fn(zz)
+            samples[C*(t+1):C*(t+2)] = pxx
+            z = self.denoiser_fn(zz)
+            px = self.decoder_fn(z)
         draw_mnist(samples, 'samples/', T, C, name)
 
     def dump_recons(self, D, name):
@@ -142,14 +149,14 @@ def draw_mnist(samples, output_dir, num_samples, num_chains, name):
 
 if __name__ == '__main__':
 
-    model = EGSN(784, 100)
+    model = EGSN(784, 784/2)
     D = numpy.load("../mnist.npy")
     D = (D > 0.5).astype('float32')
     #D = D - numpy.mean(D, axis=0)
     #D = D / numpy.max(abs(D), axis=0)
     #D = (D + 1.) / 2.
     #D = D.astype('float32')
-    model.train(D, 100, 100, 1., 0.99)
+    model.train(D, 100, 100, 0.25, 0.99)
 
 
 
