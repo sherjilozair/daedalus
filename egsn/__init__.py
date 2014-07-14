@@ -10,6 +10,7 @@ import sys
 import gzip
 import cPickle
 import operator as op
+import time
 
 sigm = T.nnet.sigmoid
 tanh = T.tanh
@@ -49,6 +50,7 @@ class MLP():
 
 class EGSN():
     def __init__(self, dimX, dimZ):
+        self.lvl = 0.2
         self.dimX = dimX
         self.dimZ = dimZ
         self.encoder = MLP(dimX, dimZ, [1200], [tanh, sigm])
@@ -58,7 +60,7 @@ class EGSN():
         rx = self.decoder(self.encoder(x))
         cost1 = ce(rx, x).mean(axis=1).mean(axis=0)
         z = self.encoder(x)
-        nz = self.add_noise(z, 0.2)
+        nz = self.add_noise(z, self.lvl)
         self.denoiser = MLP(dimZ, dimZ, [1200], [tanh, sigm])
         rz = self.denoiser(nz)
         cost2 = ce(rz, z).mean(axis=1).mean(axis=0)
@@ -66,30 +68,40 @@ class EGSN():
         self.params = self.encoder.params + self.decoder.params# + self.denoiser.params
         grads = T.grad(cost, self.params)
         updates = map(lambda (param, grad): (param, param - lr * grad), zip(self.params, grads))
-        self.train_fn = theano.function([x, lr], [cost1, cost2], updates=updates)
+        self.train_fn = theano.function([x, lr], [cost1, cost2], updates=updates, allow_input_downcast=True)
+        self.encoder_fn = theano.function([x], self.encoder(x), allow_input_downcast=True)
+        z = T.fmatrix('z')
+        self.decoder_fn = theano.function([z], self.decoder(z), allow_input_downcast=True)
 
     def train(self, D, epochs, mbsz, lr_init, lr_scale):
         ind = range(D.shape[0])
         lr = lr_init
         num_batches = D.shape[0] / mbsz
+        t1 = time.clock()
         for e in xrange(epochs):
             cPickle.dump(self, open("models/model_%s.pkl" % e, 'w'))
             random.shuffle(ind)
             cost1 = 0.0
             cost2 = 0.0
-            #self.dump_samples(D, e)
-            #self.dump_recons(D, e)
+            self.dump_samples(D, e)
+            self.dump_recons(D, e)
             for b in xrange(num_batches):
                 bs = D[ind[mbsz * b: mbsz * (b+1)]]
                 [cs1, cs2] = self.train_fn(bs, lr)
                 cost1 += cs1
                 cost2 += cs2
                 #print "minibatch", e, b, cs1, cs2, lr
+            t2 = time.clock()
+            duration = t2 - t1
+            t1 = t2
             lr *= lr_scale
-            print e, cost1 / num_batches, cost2 / num_batches, lr
+            print e, cost1 / num_batches, cost2 / num_batches, lr, duration
     
     def add_noise(self, z, corruption_level):
         return z + rng_theano.normal(size=z.shape, avg = 0.0, std = corruption_level)
+
+    def add_noise_np(self, z, corruption_level):
+        return z + numpy.random.normal(0, corruption_level, z.shape)
 
     def dump_samples(self, D, name):
         C = 10
@@ -99,12 +111,11 @@ class EGSN():
         #px = self.sample_fn(z)
         #x = sample_bernoulli_fn(px)
         px = x = D[:C]
+        z = self.encoder_fn(x)
         for t in xrange(T):
             samples[C*t:C*(t+1)] = px
-            z = self.infer_fn(x)
-            zz = salt_and_pepper_fn(z, self.lvl)
-            px = self.sample_fn(zz)
-            x = sample_bernoulli_fn(px)
+            zz = self.add_noise_np(z, self.lvl)
+            px = self.decoder_fn(zz)
         draw_mnist(samples, 'samples/', T, C, name)
 
     def dump_recons(self, D, name):
@@ -112,8 +123,8 @@ class EGSN():
         T = 10
         samples = numpy.zeros((C * T, D.shape[1]))
         for t in xrange(T):
-            z = self.infer_fn(D[C*t:C*(t+1)])
-            px = self.sample_fn(z)
+            z = self.encoder_fn(D[C*t:C*(t+1)])
+            px = self.decoder_fn(z)
             samples[C*t:C*(t+1)] = px
         draw_mnist(samples, 'recons/', T, C, name)
 
@@ -138,7 +149,7 @@ if __name__ == '__main__':
     #D = D / numpy.max(abs(D), axis=0)
     #D = (D + 1.) / 2.
     #D = D.astype('float32')
-    model.train(D, 100, 100, .1, 0.99)
+    model.train(D, 100, 100, 1., 0.99)
 
 
 
