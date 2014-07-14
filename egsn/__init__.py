@@ -1,6 +1,7 @@
 import theano
 import numpy
 from theano import tensor as T
+import random
 
 from PIL import Image
 
@@ -50,15 +51,15 @@ class EGSN():
     def __init__(self, dimX, dimZ):
         self.dimX = dimX
         self.dimZ = dimZ
-        self.encoder = MLP(dimX, dimZ, [1200], [tanh, tanh])
-        self.encoder = MLP(dimZ, dimX, [1200], [tanh, tanh])
+        self.encoder = MLP(dimX, dimZ, [1200], [tanh, sigm])
+        self.decoder = MLP(dimZ, dimX, [1200], [tanh, sigm])
         x = T.fmatrix('x')
         lr = T.scalar('lr')
         rx = self.decoder(self.encoder(x))
         cost1 = ce(rx, x).mean(axis=1).mean(axis=0)
         z = self.encoder(x)
         nz = self.add_noise(z, 0.2)
-        self.denoiser = MLP(dimZ, dimZ, [1200], [tanh, tanh])
+        self.denoiser = MLP(dimZ, dimZ, [1200], [tanh, sigm])
         rz = self.denoiser(nz)
         cost2 = ce(rz, z).mean(axis=1).mean(axis=0)
         cost = cost1 + cost2
@@ -83,12 +84,12 @@ class EGSN():
                 [cs1, cs2] = self.train_fn(bs, lr)
                 cost1 += cs1
                 cost2 += cs2
-                #print "f g minibatch", e, b, cs1, cs2, lr
+                #print "minibatch", e, b, cs1, cs2, lr
             lr *= lr_scale
             print e, cost1 / num_batches, cost2 / num_batches, lr
     
     def add_noise(self, z, corruption_level):
-        eturn x + rng_theano.normal(size=z.shape, avg = 0.0, std = corruption_level)
+        return z + rng_theano.normal(size=z.shape, avg = 0.0, std = corruption_level)
 
     def dump_samples(self, D, name):
         C = 10
@@ -137,7 +138,7 @@ if __name__ == '__main__':
     #D = D / numpy.max(abs(D), axis=0)
     #D = (D + 1.) / 2.
     #D = D.astype('float32')
-    model.train(D, 100, 100, .5, 0.99)
+    model.train(D, 100, 100, .1, 0.99)
 
 
 
