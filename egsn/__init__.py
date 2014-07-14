@@ -62,8 +62,8 @@ class EGSN():
         self.denoiser = MLP(dimZ, dimZ, [1200], [tanh, sigm])
         rz = self.denoiser(nz)
         cost2 = ce(rz, z).mean(axis=1).mean(axis=0)
-        cost = cost1 + cost2
-        self.params = self.encoder.params + self.decoder.params + self.denoiser.params
+        cost = cost1 #+ cost2
+        self.params = self.encoder.params + self.decoder.params# + self.denoiser.params
         grads = T.grad(cost, self.params)
         updates = map(lambda (param, grad): (param, param - lr * grad), zip(self.params, grads))
         self.train_fn = theano.function([x, lr], [cost1, cost2], updates=updates)
