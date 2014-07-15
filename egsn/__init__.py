@@ -53,8 +53,8 @@ class EGSN():
         self.lvl = 0.5
         self.dimX = dimX
         self.dimZ = dimZ
-        self.encoder = MLP(dimX, dimZ, [1200], [tanh, sigm])
-        self.decoder = MLP(dimZ, dimX, [1200], [tanh, sigm])
+        self.encoder = MLP(dimX, dimZ, [500], [tanh, sigm])
+        self.decoder = MLP(dimZ, dimX, [500], [tanh, sigm])
         x = T.fmatrix('x')
         lr = T.scalar('lr')
         alpha = T.scalar('alpha')
@@ -62,7 +62,7 @@ class EGSN():
         cost1 = ce(rx, x).mean(axis=1).mean(axis=0)
         z = self.encoder(x)
         nz = self.add_noise(z, self.lvl)
-        self.denoiser = MLP(dimZ, dimZ, [1200], [tanh, sigm])
+        self.denoiser = MLP(dimZ, dimZ, [500], [tanh, sigm])
         rz = self.denoiser(nz)
         cost2 = ce(rz, z).mean(axis=1).mean(axis=0)
         #cost = cost1 + alpha * cost2
@@ -86,7 +86,7 @@ class EGSN():
         num_batches = D.shape[0] / mbsz
         t1 = time.clock()
         for e in xrange(epochs):
-            cPickle.dump(self, open("models/model_%s.pkl" % e, 'w'))
+            #cPickle.dump(self, open("models/model_%s.pkl" % e, 'w'))
             random.shuffle(ind)
             cost1 = 0.0
             cost2 = 0.0
@@ -149,7 +149,7 @@ def draw_mnist(samples, output_dir, num_samples, num_chains, name):
 
 if __name__ == '__main__':
 
-    model = EGSN(784, 784/2)
+    model = EGSN(784, 100)
     D = numpy.load("../mnist.npy")
     D = (D > 0.5).astype('float32')
     #D = D - numpy.mean(D, axis=0)
