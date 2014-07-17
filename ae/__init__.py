@@ -49,32 +49,55 @@ class MLP():
         return reduce(lambda x, fn: fn(x), self.layers, inp)
 
 class AE():
-    def __init__(self, dimX, dimZ):
+    def __init__(self, dim):
+        [dimX, dimH, dimZ] = dim
         self.lvl = 0.5
         self.dimX = dimX
+        self.dimH = dimH
         self.dimZ = dimZ
-        self.encoder = MLP(dimX, dimZ, [1200], [tanh, sigm])
-        self.decoder = MLP(dimZ, dimX, [1200], [tanh, sigm])
-        self.params = self.encoder.params + self.decoder.params
+        self.encoder1 = MLP(dimX, dimH, [1200], [tanh, sigm])
+        self.encoder2 = MLP(dimH, dimZ, [500], [tanh, sigm])
+        self.decoder2 = MLP(dimZ, dimH, [500], [tanh, sigm])
+        self.decoder1 = MLP(dimH, dimX, [1200], [tanh, sigm])
+
+        #self.denoiserZ = MLP(dimZ, dimZ, [700], [tanh, sigm])
+
+        self.params = self.encoder1.params + self.decoder1.params
+        self.params += self.encoder2.params + self.decoder2.params
         self.x = T.fmatrix('x')
         self.z = T.fmatrix('z')
         self.lr = T.scalar('lr')
-        self.rx = self.decoder(self.encoder(self.x))
-        self.rz = self.encoder(self.decoder(self.z))
+        h = self.encoder1(self.x)
+        hn = self.add_noise(h, 0.97)
+        self.rx = self.decoder1(hn)
+        z = self.encoder2(h)
+
+        #nz = self.add_noise(z, 0.1)
+        #rz = self.denoiserZ(nz)
+        #self.params += self.denoiserZ.params
+        #self.cost3 = ce(rz, z).mean(axis=1).mean(axis=0)
+        #gradsH = T.grad(self.cost3, self.denoiserZ.params)
+        #updatesH = map(lambda (param, grad): (param, param - self.lr * grad), zip(self.denoiserZ.params, gradsH))
+
+        zn = self.add_noise(z, 0.897)
+        self.rh = self.decoder2(zn)
+        #self.rz = self.encoder(self.decoder(self.z))
         self.cost1 = ce(self.rx, self.x).mean(axis=1).mean(axis=0)
-        self.cost2 = ce(self.rz, self.z).mean(axis=1).mean(axis=0)
-        self.cost = (self.cost1 + self.cost2)
-        self.grads1 = T.grad(self.cost1, self.encoder.params)
-        self.grads2 = T.grad(self.cost1, self.decoder.params)
-        self.grads3 = T.grad(self.cost2, self.decoder.params)
-        self.grads4 = map(lambda (i, j): i + j, zip(self.grads2, self.grads3))
-        self.grads = self.grads1 + self.grads4
+        self.cost2 = ce(self.rh, h).mean(axis=1).mean(axis=0)
+        self.cost = self.cost1 + 0.01 * self.cost2 #+ 0.005 * self.cost3
+        self.grads = T.grad(self.cost, self.params)
+        #self.grads2 = T.grad(self.cost1, self.decoder.params)
+        #self.grads3 = T.grad(self.cost2, self.decoder.params)
+        #self.grads4 = map(lambda (i, j): i + j, zip(self.grads2, self.grads3))
+        #self.grads = self.grads1 + self.grads4
         self.updates = map(lambda (param, grad): (param, param - self.lr * grad), zip(self.params, self.grads))
-        self.train_fn = theano.function([self.x, self.z, self.lr], self.cost, updates=self.updates, allow_input_downcast=True)
+        #self.updates += updatesH
+        self.train_fn = theano.function([self.x, self.lr], [self.cost1, self.cost2], updates=self.updates, allow_input_downcast=True)
         z = T.fmatrix('z')
-        self.decoder_fn = theano.function([z], self.decoder(z), allow_input_downcast=True)
-        self.encoder_fn = theano.function([self.x], self.encoder(self.x), allow_input_downcast=True)
-        
+        self.decoder_fn = theano.function([z], self.decoder1(self.decoder2(z)), allow_input_downcast=True)
+        self.encoder_fn = theano.function([self.x], self.encoder2(self.encoder1(self.x)), allow_input_downcast=True)
+        #self.denoiser_fn = theano.function([z], self.denoiserZ(z), allow_input_downcast=True)
+
     def neglogprob(self, z):
         t2 = z.norm(2, axis=1)**2 / (2 * z.shape[1])
         return t2
@@ -93,7 +116,8 @@ class AE():
             for b in xrange(num_batches):
                 bs = D[ind[mbsz * b: mbsz * (b+1)]]
                 z = numpy.random.normal(0, 1, (mbsz, self.dimZ)).astype('float32')
-                cs = self.train_fn(bs, z, lr)
+                cs = self.train_fn(bs, lr)
+                cs = numpy.array(cs)
                 cost += cs
                 #print "minibatch", e, b, cs1, cs2, lr
             t2 = time.clock()
@@ -101,22 +125,31 @@ class AE():
             t1 = t2
             lr *= lr_scale
             print e, cost / num_batches, lr, duration
-    
+
     def add_noise(self, z, corruption_level):
         return z + rng_theano.normal(size=z.shape, avg = 0.0, std = corruption_level)
 
     def add_noise_np(self, z, corruption_level):
         return z + numpy.random.normal(0, corruption_level, z.shape)
 
+    noise = 0.1
+
     def dump_samples(self, D, name):
-        C = 10
-        T = 10
+        C = 100
+        T = 100
         samples = numpy.zeros((C * T, D.shape[1]))
+        px = D[:C]
         for t in xrange(T):
-            z = numpy.random.normal(0, 1, (C, self.dimZ))
-            px = self.decoder_fn(z)
             samples[C*t:C*(t+1)] = px
-        draw_mnist(samples, 'samples/', T, C, name)
+            z = self.encoder_fn(px)
+            z = self.add_noise_np(z, 0.897)
+            #z = self.denoiser_fn(z)
+            px = self.decoder_fn(z)
+
+        draw_mnist(samples, 'samples/', T, C, "%s_%s" % (name, self.noise))
+        #self.noise += 0.1
+        #if self.noise > 0.95:
+        #    self.noise = 0.1
 
     def dump_recons(self, D, name):
         C = 10
@@ -137,14 +170,14 @@ def draw_mnist(samples, output_dir, num_samples, num_chains, name):
             pic = samples[i*num_chains+j].reshape(28, 28) * 255
             im = Image.fromarray(pic)
             all.paste(im, (28*i, 28*j))
-    all.save(os.path.join(output_dir, 'samples_%d.png' % name))
- 
+    all.save(os.path.join(output_dir, 'samples_%s.png' % name))
+
 
 if __name__ == '__main__':
-    model = AE(784, 100)
+    model = AE([784, 400, 100])
     D = numpy.load("../mnist.npy")
     D = (D > 0.5).astype('float32')
-    model.train(D, 100, 100, 0.25, 0.99)
+    model.train(D, 200, 100, 1., 0.99)
 
 
 

@@ -1,7 +1,7 @@
 import theano
 import numpy
 from theano import tensor as T
-
+import time
 from PIL import Image
 
 import os
@@ -52,38 +52,41 @@ def sample_bernoulli(pz):
 class Model():
     def __init__(self, dimX, dimZ, hls, acts):
     	self.dimZ = dimZ
-        self.f = MLP(dimX, dimZ, hls, acts)
-        self.g = MLP(dimZ, dimX, hls, acts)
+        self.f = MLP(dimX, dimZ, [1200], [tanh, tanh])
+        self.g = MLP(dimZ, dimX, [1200], [tanh, sigm])
         self.generator = MLP(dimZ, dimX, [1200, 1200], [tanh, tanh, sigm])
         self.params = self.f.params + self.g.params + self.generator.params
         x = T.fmatrix('x')
         lr = T.scalar('lr')
         noise = T.scalar('noise')
-        z = self.f(x)
+        z = self.f(2*x-1)
         rx = self.g(z)
         cost_recons = ce(rx, x).mean(axis=1).mean(axis=0)
-        
-        cz = rng_theano.uniform(low=0, high=1, size=z.shape)
-        nz = self.nearest_neighbour_of_in(cz, z) # nn of cz in z
+
+        rand = rng_theano.uniform(low=0, high=1, size=z.shape)
+        nz = self.nearest_neighbour_of_in(rand, z) # nn of rand in z
         xnz = self.g(nz)
-        rxx = self.generator(cz)
+        rxx = self.generator(rand)
         cost_gen = ce(rxx, xnz).mean(axis=1).mean(axis=0)
-        cost = (cost_recons + cost_gen) / 2.
-        grads = T.grad(cost, self.params, consider_constant=[xnz, cz])
+        grads_f = T.grad(cost_recons, self.f.params)
+        grads_g = T.grad(cost_recons, self.g.params)
+        grads_gen = T.grad(cost_gen, self.generator.params)
+        grads = grads_f + grads_g + grads_gen
         updates = map(lambda (param, grad): (param, param - lr * grad), zip(self.params, grads))
         nnd = self.nearest_neighbour_distances(z)
         self.train_fn = theano.function([x, lr], [cost_recons, cost_gen, nnd.mean(), nnd.std()], updates=updates)
 
         z = T.fmatrix('z')
         self.sample_fn = theano.function([z], self.g(z), allow_input_downcast=True)
-        self.infer_fn = theano.function([x], self.f(x), allow_input_downcast=True)    
-        self.generator_fn = theano.function([z], self.generator(z), allow_input_downcast=True)
+        self.infer_fn = theano.function([x], self.f(2*x-1), allow_input_downcast=True)
+        self.generator_fn = theano.function([z], self.g(z), allow_input_downcast=True)
 
     def train(self, D, epochs, mbsz, lr_init, lr_scale):
         ind = range(D.shape[0])
         lr = lr_init
         num_batches = D.shape[0] / mbsz
         noisev = 0.999999
+        t1 = time.clock()
         for e in xrange(epochs):
             if e % 5 == 0:
                 cPickle.dump(self, open("models/model_%s.pkl" % e, 'w'))
@@ -98,11 +101,14 @@ class Model():
                 cs = self.train_fn(bs, lr)
                 cs = numpy.array(cs)
                 cost += cs
-                #print "f g minibatch", e, b, cs1, cs2, lr
+                print "minibatch", e, b, cs, lr
+            t2 = time.clock()
+            dur = t2 - t1
+            t1 = t2
             lr *= lr_scale
             noisev *= 0.99
-            print e, cost / num_batches, noise, lr
-        
+            print e, cost / num_batches, noise, lr, dur
+
     def dump_recons(self, D, name):
         C = 20
         T = 20

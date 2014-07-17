@@ -20,8 +20,18 @@ from theano.tensor.shared_randomstreams import RandomStreams
 rng_theano = RandomStreams()
 
 
-class Layer():
-    def __init__(self, n_in, n_out, act=tanh):
+class Layer2():
+    def __init__(self, n_in, n_out, act=sigm):
+        self.act = act
+        self.layer1 = Layer1(n_in, 1200)
+        self.layer2 = Layer1(1200, n_out)
+        self.params = self.layer1.params + self.layer2.params
+
+    def __call__(self, inp):
+        return self.layer2(self.layer1(inp))
+
+class Layer1():
+    def __init__(self, n_in, n_out, act=sigm):
         self.act = act
         self.W = self.init_weight(n_in, n_out, act)
         self.b = self.init_bias(n_out)
@@ -38,6 +48,8 @@ class Layer():
 
     def __call__(self, inp):
         return self.act(T.dot(inp, self.W) + self.b)
+
+Layer = Layer2
 
 class MLP():
     def __init__(self, n_in, n_out, hls, acts):
@@ -68,11 +80,11 @@ class SAE():
             h[l+1] = self.encoder[l](h[l])
             r[l] = self.decoder[l](h[l+1])
             costs[l] = self.dis(r[l], h[l])
-        self.cost = sum(costs)
+        self.cost = costs[0] + 0.0000001*sum(costs[1:])
         self.grads = T.grad(self.cost, self.params)
         self.updates = map(lambda (param, grad): (param, param - lr * grad), zip(self.params, self.grads))
         self.train_fn = theano.function([x, lr], costs, updates=self.updates, allow_input_downcast=True)
-    
+
         h = x
         for l in xrange(len(self.encoder)):
             h = self.encoder[l](h)
@@ -104,9 +116,10 @@ class SAE():
             t1 = t2
             lr *= lr_scale
             print e, cost / num_batches, lr, duration
- 
+
     def dis(self, x1, x2):
-        return ((x1 - x2)**2).mean(axis=1).mean(axis=0)
+        #return ((x1 - x2)**2).mean(axis=1).mean(axis=0)
+        return ce(x1, x2).mean(axis=1).mean(axis=0)
 
     def dump_recons(self, D, name):
         C = 10
@@ -130,9 +143,9 @@ def draw_mnist(samples, output_dir, num_samples, num_chains, name):
 
 
 if __name__ == '__main__':
-    model = SAE(784, [1200, 1200], 100)
+    model = SAE(784, [300], 100)
     D = numpy.load("../mnist.npy")
     D = (D > 0.5).astype('float32')
-    model.train(D, 100, 100, 0.25, 0.99)
+    model.train(D, 200, 100, 0.25, 0.99)
 
 
