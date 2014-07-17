@@ -151,10 +151,10 @@ def draw_mnist(samples, output_dir, num_samples, num_chains, name):
     all.save(os.path.join(output_dir, 'samples_%d.png' % name))
 
 def nearest_neighbour(z):
-    d = ((z - z[:, numpy.newaxis, :])**2).min(axis=2)
+    d = ((z - z[:, numpy.newaxis, :])**2).sum(axis=2)
     ind = [(d + (d.max()+1)* numpy.eye(d.shape[0])).argmin(axis=0)]
     znn = z[ind]
-    return ((z - znn)**2).min(axis=1).mean()
+    return ((z - znn)**2).sum(axis=1).mean()
 
 def salt_and_pepper(z, lvl):
     if lvl == 0.0:
