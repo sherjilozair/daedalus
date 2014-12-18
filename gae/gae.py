@@ -16,39 +16,13 @@ from theano.tensor.shared_randomstreams import RandomStreams
 rng_theano = RandomStreams()
 rng_numpy = numpy.random
 
-class SplSgn(UnaryScalarOp):
-    def impl(self, x):
-        #casting to output type is handled by filter
-        return numpy.sign(x)
-
-    def grad(self, (x, ), (gz, )):
-        if x.type in continuous_types:
-            return gz,
-        else:
-            return None,
-
-    def c_code(self, node, name, (x, ), (z, ), sub):
-        #casting is done by compiler
-        #TODO: use copysign
-        type = node.inputs[0].type
-        if type in float_types:
-            return "%(z)s = (%(x)s >= 0) ? (%(x)s == 0) ? 0.0 : 1.0 : -1.0;" % locals()
-        if type in int_types:
-            return "%(z)s = (%(x)s >= 0) ? (%(x)s == 0) ? 0 : 1 : -1;" % locals()
-        raise TypeError()  # complex has no sgn
-
-    def c_code_cache_version(self):
-        s = super(SplSgn, self).c_code_cache_version()
-        if s:
-            return (3,) + s
-        else:  # if parent is unversioned, we are too
-            return s
-
-splsgn = SplSgn(same_out_nocomplex, name='splsgn')
-
 sigm = T.nnet.sigmoid
 tanh = T.tanh
+relu = lambda x: T.maximum(x, 0)
 ce = lambda x, y: T.nnet.binary_crossentropy(x, y)
+
+NOISE = 0.0
+DIMZ = 200
 
 class Layer():
     def __init__(self, n_in, n_out, act):
@@ -80,69 +54,120 @@ class MLP():
 
 class Multinomial():
     def __init__(self, dim):
-        self.W = theano.shared(numpy.random.normal(size=(dim, ), scale=0.00001))
+        self.dim = dim
+        self.W = theano.shared(numpy.random.normal(size=(dim, ), scale=0.1))
         self.params = [self.W]
 
     def get_cost(self, x):
         return ce(sigm(self.W), x)
+
+    def sample(self, n):
+        w = sigm(self.W).eval()
+        return rng_numpy.binomial(n=1, p=w, size=(n, self.dim)).astype('float32')
+
+    def loglikelihood(self, x):
+        return self.get_cost(x).sum(axis=1).eval()
 
 
 def corrupt_SnP(x, corruption_level):
     if corruption_level == 0.0:
         return x
     a = rng_theano.binomial(size=x.shape, n=1, p=1-corruption_level)
-    #b = rng_theano.binomial(size=x.shape, n=1, p=0.5)
-    b = rng_theano.uniform(size=x.shape, low=0.0, high=1.0)
+    b = rng_theano.binomial(size=x.shape, n=1, p=0.5)
+    #b = rng_theano.uniform(size=x.shape, low=0.0, high=1.0)
     return x * a + T.eq(a, 0) * b
 
 class GAE():
-    def __init__(self, dimX, dimH):
-        self.encoder = MLP(dimX, dimH, [1200], [tanh, sigm])
-        self.decoder = MLP(dimH, dimX, [1200], [tanh, sigm])
+    def __init__(self, dimX, dimH, sizes, acts, name, old_models):
+        self.name = name
+        self.alpha = T.scalar('alpha')
+        self.beta = T.scalar('beta')
+        self.old_models = old_models
+        self.dimX = dimX
+        self.encoder = MLP(dimX, dimH, sizes, acts)
+        self.decoder = MLP(dimH, dimX, sizes, acts)
         self.toplayer = Multinomial(dimH)
         self.X = T.fmatrix('X')
         self.lr = T.scalar('lr')
         self.H = self.encoder(self.X)
-        self.SH = T.sgn(self.H)
-        self.RX = self.decoder(self.SH)
-        cost_recons = (ce(self.RX, self.X).sum(axis=1)/784).mean(axis=0)
-        cost_prior = (self.toplayer.get_cost(self.SH).sum(axis=1)/784).mean(axis=0)
+        self.H2 = (T.ident(2.*self.H-1.)+1.)/2.
+
+        self.RX = self.decoder(corrupt_SnP(self.H2, 0.01))
+        cost_recons = ce(self.RX, self.X).mean(axis=1).mean(axis=0)
+        cost_prior = self.toplayer.get_cost(self.H2).mean(axis=1).mean(axis=0)
 
         #cost_derivative = ((self.H - self.H**2).sum(axis=1)/784).mean(axis=0)
-        cost = cost_recons + cost_prior# + cost_derivative
+        cost = self.alpha * cost_recons + self.beta * cost_prior # + cost_derivative
         params = self.encoder.params + self.decoder.params + self.toplayer.params
         grads = T.grad(cost, params)
         updates = map(lambda (param, grad): (param, param - self.lr * grad), zip(params, grads))
-        self.train_fn = theano.function([self.X, self.lr], [cost_recons, cost_prior], updates=updates)
+        self.train_fn = theano.function([self.X, self.lr, self.alpha, self.beta], [cost_recons, cost_prior], updates=updates, allow_input_downcast=True)
+        self.encode_fn = theano.function([self.X], self.H, allow_input_downcast=True)
+        hup = T.fmatrix('hup')
+        hdown1 = self.decoder(hup)
+        hdown2 = (T.ident(2.*hdown1-1.)+1.)/2.
+        self.decode_fn = theano.function([hup], hdown1, allow_input_downcast=True)
+        self.sign_fn = theano.function([hdown1], hdown2, allow_input_downcast=True)
 
-    def train(self, dataset, mbsz, epochs, lr):
+    def train(self, dataset, epochs, mbsz, lr, lr_scale):
+        f = open('alpha')
+        [alpha, beta] = map(float, f.read().split(','))
+        f.close()
         for e in xrange(epochs):
             rng_numpy.shuffle(dataset)
             t1 = time.clock()
-            costs = 0.
-            for i in xrange(0, len(dataset), mbsz):
-                cost = self.train_fn(dataset[i:i+mbsz], lr)
+            costs = 0. 
+            for i in xrange(0, len(dataset), mbsz):                
+                cost = self.train_fn(dataset[i:i+mbsz], lr, alpha, beta)
                 cost = numpy.array(cost)
                 #print cost
                 costs += cost
             t2 = time.clock()
             self.dump_recons(dataset, 15, 15, e)
             self.dump_samples(15, 15, e)
-            print e, (t2 - t1), costs / float(len(range(0, len(dataset), mbsz))), lr
-            lr *= 0.99
+            costs = costs / float(len(range(0, len(dataset), mbsz)))
+            print e, (t2 - t1), costs, costs.sum(), lr, alpha, beta
+            f = open('alpha')
+            [alpha, beta] = map(float, f.read().split(','))
+            f.close()
+            #lr *= lr_scale
 
+    def loglikelihood(self, X):
+        H = X
+        for i in xrange(len(self.old_models)):
+            mod = self.old_models[i]
+            H = mod.encode_fn(H)
+            H = mod.sign_fn(H)
+        H = self.encode_fn(H)
+        H2 = self.sign_fn(H)
+        p1 = self.toplayer.loglikelihood(H2)
+        M = self.decode_fn(H2)
+        for i in reversed(xrange(len(self.old_models))):
+            mod = self.old_models[i]
+            M = mod.sign_fn(M)
+            M = mod.decode_fn(M)
+        p2 = ce(M, X).sum(axis=1).eval()
+        return p1, p2
+        
     def dump_recons(self, D, x, y, name):
-        DD = self.decoder(self.encoder(D[:x*y])).eval()
-        draw_mnist(DD, 'recons/', x, y, name)
+        h = self.encode_fn(D[:x*y])
+        h = self.sign_fn(h)
+        m = self.decode_fn(h)
+        for i in reversed(xrange(len(self.old_models))):
+            mod = self.old_models[i]
+            m = self.sign_fn(m)
+            m = mod.decode_fn(m)
+        draw_mnist(m, 'recons_%d/' % self.name, x, y, name)
 
     def dump_samples(self, x, y, name):
-        w = sigm(model.toplayer.W).eval()
-        r = numpy.random.uniform(size=(x*y, w.shape[0]))
-        h = (r < w).astype('float32')
-        s = self.decoder(h).eval()
-        draw_mnist(s, 'samples/', x, y, name)
+        h = self.toplayer.sample(x*y)
+        m = self.decode_fn(h)
+        for i in reversed(xrange(len(self.old_models))):
+            mod = self.old_models[i]
+            m = self.sign_fn(m)
+            m = mod.decode_fn(m)
 
-
+        draw_mnist(m, 'samples_%d/' % self.name, x, y, name)
 
 def draw_mnist(samples, output_dir, num_samples, num_chains, name):
     if not os.path.exists(output_dir):
@@ -157,10 +182,20 @@ def draw_mnist(samples, output_dir, num_samples, num_chains, name):
 
 
 if __name__ == '__main__':
-    model = GAE(784, 200)
-    D = numpy.load("../mnist.npy")
-    D = (D > 0.5).astype('float32')
-    model.train(D, 100, 100, 1.)
+    D = numpy.load('../mnist.npy')
+    model1 = GAE(784, 300, [1200, 1200, 300, 1200, 1200, 300, 1200, 1200], [relu, relu, relu, relu, relu, relu, relu, relu, sigm], 3, [])
+    model1.train(D, 2000, 100, 1., .99)
+    #H2 = model2.encode_fn(H1)
+    #H2 = model2.sign_fn(H2)
+    #model2 = GAE(200, 200, [500], [tanh, sigm], 2, [model1])
+    #model2.train(H1, 100, 100, 1., .99)
+    #H2 = model2.encode_fn(H1)
+    #H2 = model2.sign_fn(H2)
+    #model_fine_tune = GAEFineTuner(model1, model2)
+    #model3 = GAE(200, 200, [500, 500], [tanh, tanh, sigm], 3, [model1, model2])
+    #model3.train(H2, 500, 100, 1., .995)
+    #H3 = model3.encode_fn(H2).astype('float32')
+    
 
 
 
